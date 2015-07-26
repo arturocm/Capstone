@@ -1,0 +1,338 @@
+---
+title: "Coursera's Data Science Specialization Capstone Milestone Report"
+author: "Arturo Cardenas"
+date: "July 25, 2015"
+output: html_document
+---
+
+
+
+###Executive Summary
+
+
+The capstone project allows us (students) to create a usable/public data product that can be used to show the skills developed throughout the nine courses of the data science specialization. In this occasion, we'll work on understanding and building Predictive Text Models like the ones used by **[SwiftKey](http://swiftkey.com/en/)** - Coursera's corporate partner for this capstone project.
+
+This Milestone Report will cover:
+
+* General Overview of the *.zip file provided for this capstone project
+* Detailed review of the files to be used
+* First glimpse at **Tokenization**
+* Next steps
+
+**Note:** If you are interested in the code used to create this .Rmd file you can go to **[GitHub](https://github.com/arturocm)**
+
+```{r loadpackages, message=F, warning=F, echo=F}
+require(data.table)
+require(dplyr)
+require(tm)
+require(stringr)
+require(stringi)
+require(reshape2)
+require(rCharts)
+require(knitr)
+require(RCurl)
+require(ggplot2)
+```
+
+```{r localsettings, message=F, warning=F, echo=F}
+## just for convinence
+setwd("C:\\Users\\cardenas.a.5\\Documents\\0 Coursera\\10 Capstone\\R")
+```
+
+```{r dataload, message=F, warning=F, echo=F, cache=F}
+##############################################################
+################## General Settings ##########################
+##############################################################
+
+## Double check that string values will be read as strings
+options(stringsAsFactors = FALSE)
+
+##############################################################
+################## General Functions #########################
+##############################################################
+
+## Map path to different folders containing the misc files
+paths       <- list(data = '../../data/final',
+                    r     = '../../R',
+                    models= '../../models')
+# paths       <- list(data = '../data/final',
+#                     r     = '../R',
+#                     models= '../models')
+
+## Map path to a specific filer wihtin a specific folder
+files.input <- function(path = "/data/final/", language = "en_US"){
+  input     <- paste(path, language, sep="//")
+  return(input)
+}
+## Read *.txt files to create corpus
+txtinput    <- function(filename = "en_US.twitter.txt"){
+  con       <- file(filename, "r")
+  data      <- readLines(con, encoding = "UTF-8")
+  close(con)
+  data      <- iconv(data, "latin1", "ASCII", sub="")
+  return(data)
+}
+
+##############################################################
+################### Map Data Paths ###########################
+##############################################################
+
+## List all the available language folders in the data folder
+main.languages  <- list.files(paths[["data"]])
+## Map the path to the folder containing the english files
+english         <- files.input(paths[["data"]], 
+                               main.languages[main.languages %in% "en_US"])
+## List all the available *.txt files in the "english" folder
+input.types     <- list.files(english)
+## Map path to each of the english *.txt files listed before
+english.types   <- files.input(english, input.types)
+
+##############################################################
+####################### Load Data ############################
+##############################################################
+
+## String vector to be used to rename the imported data list
+list.names      <- c("blogs","news","twitter")
+## Utilize the user defined fuction txtinput() inside sapply to 
+## read all the files available in the folder (As defined by the 
+## english.type variable in the previous section of the script)
+input           <- sapply(english.types, txtinput, 
+                          simplify = FALSE, USE.NAMES = TRUE)
+## Rename input dataset
+names(input)    <- list.names
+
+##############################################################
+############### Exploratory Analysis #########################
+##############################################################
+
+size          <- paste(format(file.size(english.types)/1024^2, 
+                              nsmall=2), 
+                       "Mb", sep=" ")
+lines         <- sapply(input, stri_stats_general)
+lines_summary <- formatC(lines, big.mark = ",")
+words         <- sapply(input, stri_count_words)
+words_summary <- sapply(words, sum) %>% 
+                  formatC(big.mark = ",") %>% 
+                    as.character()
+char         <- sapply(input, stri_length)
+```
+
+
+
+
+###General Overview
+
+The data used in this project is from a corpus called [HC Corpora](www.corpora.heliohost.org). The files have been language filtered by [Coursera](www.coursera.org) but may still contain some foreign text. The ***.zip** file contains the following language folder:
+
+Language | Folder Name | files included | 
+---- | ----- | ----- |
+Deutsche  |`r main.languages[1]` | blogs.txt, news.txt, twitter.txt |
+English |`r main.languages[2]` | blogs.txt, news.txt, twitter.txt |
+Russian |`r main.languages[3]` | blogs.txt, news.txt, twitter.txt | 
+Finnish |`r main.languages[4]` | blogs.txt, news.txt, twitter.txt |
+
+Each Language folder contains *.txt* files from 3 different sources: **blogs**, **news** and **twitter**. 
+
+
+
+
+
+###English folder review
+
+Looking at the files contained in `r main.languages[2]` gives the following characteristics:
+
+Name | File Name |File Size | Lines | Words |
+---- | ----- | ----- | ---- | ---- |
+`r list.names[1]` |`r input.types[1]` | `r size[1]` | `r lines_summary[1,1]` | `r words_summary[1]` |
+`r list.names[2]` |`r input.types[2]` | `r size[2]` | `r lines_summary[1,2]` | `r words_summary[2]` |
+`r list.names[3]` |`r input.types[3]` | `r size[3]` | `r lines_summary[1,3]` | `r words_summary[3]` |
+
+As expected, **`r list.names[3]`** has the most lines despite being the smallest file in the folder. This has to be related to the 140 character limit twitter has. 
+
+```{r rcahrts, message=F, warning=F, echo=F, cache=F}
+##############################################################
+#################### rCharts NVD3 Setup ######################
+##############################################################
+
+## There's no direct Histogram plot fuction in rCharts hence
+## the following workaround to obtain the frequency values
+brk <- seq(0,204,4)
+blog.temp <- words[[1]]
+news.temp <- words[[2]]
+twit.temp <- words[[3]]
+blog.temp[blog.temp > 200] <- 201
+news.temp[news.temp > 200] <- 201
+twit.temp[twit.temp > 200] <- 201
+blog.rc <- hist(blog.temp, breaks = brk, plot =F)
+news.rc <- hist(news.temp, breaks = brk, plot =F)
+twitter.rc <- hist(twit.temp, breaks = brk, plot =F)
+word.freq <- cbind.data.frame(brk[1:length(blog.rc$counts)], blog.rc$counts, news.rc$counts, twitter.rc$counts)
+names(word.freq) <- c("words", "blog", "news", "twitter")
+word.freq.m <- melt(word.freq, id = "words")
+wf <- nPlot(value ~ words, group = "variable", data = word.freq.m, type = "multiBarChart")
+## Format X and Y Axis
+wf$chart(margin = list(left = 100))
+wf$xAxis(axisLabel = "Words per line")
+wf$yAxis(axisLabel = "Frequency", width = 80)
+## Save a local html copy of the chart
+wf$save('histogram.html', standalone = TRUE)
+```
+
+```{r sampling, message=F, warning=F, echo=F, cache=F}
+##############################################################
+##################### Sample Dataset #########################
+##############################################################
+
+## Create a sample vector out of the input list
+set.seed(6622)
+input.sample    <- lapply(names(input), function(i) sample(input[[i]], 3000))
+input.sample    <- as.vector(unlist(input.sample))
+
+########################################################
+################### Tokenization #######################
+########################################################
+
+tokenization <- function(input, stop.words = "yes"){
+  mycorpus <- Corpus(VectorSource(input))
+  mycorpus <- tm_map(mycorpus, content_transformer(removePunctuation))
+  mycorpus <- tm_map(mycorpus, content_transformer(stripWhitespace))
+  mycorpus <- tm_map(mycorpus, content_transformer(tolower))
+  if (tolower(stop.words) == "yes"){
+  mycorpus <- tm_map(mycorpus, removeWords, stopwords("english"))
+  }
+  mycorpus <- tm_map(mycorpus, PlainTextDocument)
+  return(mycorpus)
+}
+
+mycorpus      <- tokenization(input.sample, stop.words = "no")
+mycorpus.stop <- tokenization(input.sample, stop.words = "yes")
+
+
+########################################################
+################# Frequency Analysis ###################
+########################################################
+
+tdm  <- DocumentTermMatrix(mycorpus)
+tdm.stop  <- DocumentTermMatrix(mycorpus.stop)
+
+freq <- function(input, top = 50){
+        m         <- as.matrix(input)
+        frequency <- colSums(m) %>% 
+          sort(frequency, decreasing=TRUE)
+        frequency <- frequency[1:top]
+        return(frequency)
+}
+
+all.corpus <- freq(tdm, top = 25)
+stop.corpus <- freq(tdm.stop, top = 25)
+
+#########################################################
+###### Create Words Freq Dataframes for Plots ###########
+#########################################################
+all             <- as.data.frame(all.corpus)
+all$words       <- names(all.corpus)
+all             <- all[,c(2,1)]
+all             <- arrange(all, desc(all.corpus))
+
+exc.stop            <- as.data.frame(stop.corpus)
+exc.stop$words      <- names(stop.corpus)
+exc.stop            <- exc.stop[,c(2,1)]
+exc.stop            <- arrange(exc.stop, desc(stop.corpus))
+
+#write.csv(m, file= file.path(paths[["models"]],"tdm.csv"))
+```
+
+```{r highcharts, echo = F, cache = F}
+##############################################################
+################ rCharts Highcharts Setup ####################
+##############################################################
+
+## Order dataframes in descencing order
+exc.stop  <- exc.stop[order(desc(exc.stop$stop.corpus)),]
+all <- all[order(desc(all$all.corpus)),]
+## Create highcharts step by step so rCharts can plot the columns
+## in the intended order. Using nPlot will reorder the xAxis
+## alphabetically
+##h1 is for word histogram from sample excluding english stop words
+h1 <- Highcharts$new() 
+h1$series(data = exc.stop$stop.corpus, type = "column", showInLegend = FALSE)
+h1$xAxis(categories = exc.stop$words)
+h1$plotOptions(column = list(dataLabels = list(enabled = T, rotation = -90, 
+                                               align = 'right', color = '#FFFFFF', 
+                                               x = 4, y = 10, 
+                                               style = list(fontSize = '13px', 
+                                               fontFamily = 'Verdana, sans-serif'))))
+h1$xAxis(type = 'category', labels = list(rotation = -45, align = 'right', 
+                                          style = list(fontSize = '13px', 
+                                                       fontFamily = 'Verdana, sans-serif')), 
+         replace = F, title = list(text = "Top 25 Words (excluding STOP words)"))
+h1$tooltip(formatter = "#! function() { return '<b>' + this.x + '</b>' + ' appears ' + '<b>' + this.y + '</b>' + ' times'; } !#")
+h1$yAxis(title = list(text = "Frequency"))
+h1$title(text = "Frequency (from sample) of top 25 words excl STOP words")
+##h2 is for word histogram from sample including english stop words
+h2 <- Highcharts$new()
+h2$series(data = all$all.corpus, type = "column", showInLegend = FALSE)
+h2$xAxis(categories = all$words)
+h2$plotOptions(column = list(dataLabels = list(enabled = T, rotation = -90, 
+                                               align = 'left', color = '#FFFFFF', 
+                                               x = 4, y = 10, 
+                                               style = list(fontSize = '13px', 
+                                               fontFamily = 'Verdana, sans-serif'))))
+h2$xAxis(type = 'category', labels = list(rotation = -45, align = 'right', 
+                                          style = list(fontSize = '13px', 
+                                                       fontFamily = 'Verdana, sans-serif')), 
+         replace = F, title = list(text = "Top 25 Words"))
+h2$tooltip(formatter = "#! function() { return '<b>' + this.x + '</b>' + ' appears ' + '<b>' + this.y + '</b>' + ' times'; } !#")
+h2$yAxis(title = list(text = "Frequency"))
+h2$title(text = "Frequency (from sample) of top 25 words")
+
+## Save a local html copy of the chart
+h1$save('stop_corpus.html', standalone = TRUE)
+h2$save('all_corpus.html', standalone = TRUE)
+```
+
+The following histogram shows how the word count is distributed across the entire `r main.languages[2]` folder (e.i. all files within the folder). It is interesting to see how `r list.names[3]` skew the plot to the right until the **28 word** mark. 
+
+
+
+####English Corpus Word Histogram
+
+```{r results = "asis", comment = NA, echo = F}
+wf$show('iframesrc', cdn  = TRUE)
+```
+
+**Note:** If we were to use *number of characters* instead of *words*, twitter will still skew the plot but now it will be close to the **140 character** mark
+
+
+
+
+###Tokenization
+
+*From this point and on we are going to sample the dataset to control de processing power required to do the next operations. For now, we are going to create a subset with 3,000 lines per file.*
+
+We start with describing **[Tokenization](https://en.wikipedia.org/wiki/Tokenization_(lexical_analysis))** as the process of breaking a stream of text up into words, phrases, symbols, or other meaningful elements called tokens.
+
+The following plot shows the 25 most frequent words from our sample data set:
+
+```{r results = "asis", comment = NA, echo = F}
+h2$show('iframesrc', cdn  = TRUE)
+```
+
+Most of the words shone above are also called **[stop words](https://en.wikipedia.org/wiki/Stop_words)**. In general, stop words are the most common worlds in a language. 
+
+
+If we remove the stop words from our data set and recreate the previous plot we get the following top 25 words:
+
+```{r results = "asis", comment = NA, echo = F}
+h1$show('iframesrc', cdn  = TRUE)
+```
+
+The word *said* moved from the 14th position to the 1st position by removing the stop words. *Removing stop words is used for other NLP usages, but in this case it's only to show the difference between datasets. For this specific project we'll need to leave all stop words in the dataset as we are trying to predict phrases.*
+
+###Next Steps
+
+1. **N-Grams**: continue working on n-grams and improve performance of the predictive model
+3. **Shiny App**: explore best User Interface to be used by the predictive model
+  + Request more processing time limit from Shiny
+  + If needed, Set an Rstudio server using Amazon Web Services (AWS)
+4. **Slide Deck**: Work ahead of time on the slide Deck and try to embed the shiny app into the presentation
